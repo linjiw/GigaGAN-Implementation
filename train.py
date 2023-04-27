@@ -10,7 +10,13 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import resize
 from clip import CLIPText
-
+import wandb
+def wandb_save(tensor, logname, iter_num):
+    # image = tensor.cpu().clone()  # we clone the tensor to not do changes on it
+    # image = image.squeeze(0)      # remove the fake batch dimension
+    # image = unloader(image)
+    images = wandb.Image(tensor, caption=f'{iter_num}.png')       
+    wandb.log({f'{logname}': images})
 def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
@@ -180,17 +186,29 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
             f"real_socre: {real_score_val:.4f}; fake_score: {fake_score_val:.4f}; "
             f"augment: {ada_aug_p:.4f}"
         )
+        
+        wandb.log({'d_loss': d_loss_val} )
+        wandb.log({'g_loss_val': g_loss_val} )
+        wandb.log({'r1_loss': r1_val} )
+        wandb.log({'real_score': real_score_val} )
+        wandb.log({'fake_score': fake_score_val} )
+        # wandb.log({'path_loss': path_loss_val} )
+        # wandb.log({'mean_path_length_avg': mean_path_length_avg} )
+        wandb.log({'ada_aug_p': ada_aug_p} )
+        # wandb.log({'clip_loss': clip_loss_value.item()} )
 
-        if i % 100 == 0:
+
+        if i % args.sample_every == 0:
             with torch.no_grad():
                 g_ema.eval()
                 sample, _ = g_ema([sample_z], sample_t)
-                utils.save_image(
-                    sample[-1], f"sample/{str(i).zfill(6)}.png",
-                    nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
-                )
+                # utils.save_image(
+                #     sample[-1], f"sample/{str(i).zfill(6)}.png",
+                #     nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
+                # )
+                wandb_save(sample[-1],'Evaluation', i)
 
-        if i % 10000 == 0:
+        if i % args.save_every == 0:
             torch.save(
                 {
                     "g": g_module.state_dict(),
@@ -281,8 +299,15 @@ if __name__ == "__main__":
     args.tout_dim = 0
     args.use_multi_scale = False
     args.use_text_cond = False
-
+    # args.sample_s
+    args.n_sample = 4
+    args.batch = 4
+    args.save_every = 10000
+    args.sample_every = 200
+    
     device = args.device
+    wandb.init(project='GigaGAN-linjiw', config=args)
+
     generator = Generator(
         args.size, args.latent, args.n_mlp, args.tin_dim, args.tout_dim,
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
@@ -339,3 +364,4 @@ if __name__ == "__main__":
     text_encoder = CLIPText(args.device) if args.use_text_cond else None
 
     train(args, dataloader, generator, discriminator, text_encoder, g_optim, d_optim, g_ema, device)
+    wandb.finish()
