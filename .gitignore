@@ -140,3 +140,7 @@ wandb/
 # *.lock
 *.lock
 *.arrow
+
+# models--openai--clip-vit-base-patch32
+
+models--openai--clip-vit-base-patch32/

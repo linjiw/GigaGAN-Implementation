@@ -90,6 +90,7 @@ class Generator(nn.Module):
         if use_text_cond:
             self.style_dim = z_dim + tout_dim
             self.text_encoder = TextEncoder(tin_dim, tout_dim)
+            # style_dim = z_dim + tout_dim
         else:
             self.style_dim = z_dim
 
@@ -160,6 +161,8 @@ class Generator(nn.Module):
             in_channel = out_channel
 
         self.n_latent = self.log_size * 2 - 2
+        
+        # n_latent means how much latent to add to multi-scale
 
     def make_noise(self):
         device = self.input.input.device
@@ -195,6 +198,7 @@ class Generator(nn.Module):
             # batch, tout_dim
             t_global = t_global.squeeze(dim=1)
             styles = [torch.cat([style_, t_global], dim=1) for style_ in styles]
+            # style.dim = style_.dim + t_global.dim
 
         if not input_is_latent:
             styles = [self.style(s) for s in styles]
@@ -234,6 +238,7 @@ class Generator(nn.Module):
             latent2 = styles[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
 
             latent = torch.cat([latent, latent2], 1)
+            # cat two latent vectors from two styles
 
         images = []
         out = self.input(latent)
