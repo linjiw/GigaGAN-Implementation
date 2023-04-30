@@ -26,7 +26,7 @@ class ConstantInput(nn.Module):
 class StyledConv(nn.Module):
     def __init__(
         self, in_channel, out_channel, kernel_size, style_dim,
-        n_kernel=1, upsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True,
+        n_kernel=1, upsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True, use_noise = True,
     ):
         super().__init__()
 
@@ -34,7 +34,7 @@ class StyledConv(nn.Module):
             in_channel, out_channel, kernel_size, style_dim, n_kernel=n_kernel,
             upsample=upsample, blur_kernel=blur_kernel, demodulate=demodulate,
         )
-
+        self.use_noise = use_noise
         self.noise = NoiseInjection()
         # self.bias = nn.Parameter(torch.zeros(1, out_channel, 1, 1))
         # self.activate = ScaledLeakyReLU(0.2)
@@ -42,7 +42,9 @@ class StyledConv(nn.Module):
 
     def forward(self, input, style, noise=None):
         out = self.conv(input, style)
-        out = self.noise(out, noise=noise)
+        if self.use_noise:
+            out = self.noise(out, noise=noise)
+        
         # out = out + self.bias
         out = self.activate(out)
 
@@ -79,7 +81,7 @@ class Generator(nn.Module):
         self, size, z_dim, n_mlp, tin_dim=0, tout_dim=0,
         channel_multiplier=2, blur_kernel=[1, 3, 3, 1], lr_mlp=0.01,
         use_self_attn=False, use_text_cond=False, use_multi_scale=False,
-        attn_res=[8, 16, 32],
+        attn_res=[8, 16, 32], use_noise = True,
     ):
         super().__init__()
 
@@ -87,6 +89,7 @@ class Generator(nn.Module):
         self.use_multi_scale = use_multi_scale
         self.use_self_attn = use_self_attn
         self.use_text_cond = use_text_cond
+        self.use_noise = use_noise
         if use_text_cond:
             self.style_dim = z_dim + tout_dim
             self.text_encoder = TextEncoder(tin_dim, tout_dim)
@@ -116,13 +119,13 @@ class Generator(nn.Module):
 
         self.input = ConstantInput(self.channels[4])
         self.conv1 = StyledConv(
-            self.channels[4], self.channels[4], 3, self.style_dim, blur_kernel=blur_kernel
+            self.channels[4], self.channels[4], 3, self.style_dim, blur_kernel=blur_kernel, use_noise=self.use_noise,
         )
         self.to_rgb1 = ToRGB(self.channels[4], self.style_dim, upsample=False)
-
+        # size = 64
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
-
+        # self.num_layers = 
         self.convs = nn.ModuleList()
         self.attns = nn.ModuleList()
         self.upsamples = nn.ModuleList()
@@ -142,11 +145,11 @@ class Generator(nn.Module):
 
             self.convs.append(StyledConv(
                 in_channel, out_channel, 3, self.style_dim, upsample=True,
-                blur_kernel=blur_kernel, n_kernel=n_kernels[res],
+                blur_kernel=blur_kernel, n_kernel=n_kernels[res], use_noise=self.use_noise,
             ))
             self.convs.append(StyledConv(
                 out_channel, out_channel, 3, self.style_dim, blur_kernel=blur_kernel,
-                n_kernel=n_kernels[res],
+                n_kernel=n_kernels[res], use_noise=self.use_noise,
             ))
 
             self.attns.append(
