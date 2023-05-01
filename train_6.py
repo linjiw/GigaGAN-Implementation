@@ -189,6 +189,8 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         
         #     d_loss = torch.add(d_loss, matching_loss)
         # print(f"matching_loss: {matching_loss}")
+        
+        
         loss_dict["d"] = d_loss
         loss_dict["real_score"] = real_pred.mean()
         loss_dict["fake_score"] = fake_pred.mean()
@@ -214,14 +216,26 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         fake_img, _ = generator(noise, text_embeds)
 
         fake_pred = discriminator(fake_img, text_embeds)
-        print(f"len(fake_img): {len(fake_img)})")
-        print(f"fake_img[0].shape: {fake_img[0].shape}")
-        print(f"text_embeds.shape: {text_embeds.shape}")
-        clip_loss = aux_clip_loss(fake_img[0], text_embeds = text_embeds)
-        print(f"clip_loss: {clip_loss}")       
-
+        # print(f"len(fake_img): {len(fake_img)})")
+        # print(f"fake_img[0].shape: {fake_img[0].shape}")
+        # print(f"text_embeds.shape: {text_embeds.shape}")
+        
+        # if args.use_matching_loss:
+        #     random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
+        #     # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        #     fake_text_pred = discriminator(fake_img, random_text_embeddings)
+        #     matching_loss = aux_matching_loss(fake_pred, fake_text_pred).mean() * 0.5
+        
+        #     # d_loss = torch.add(d_loss, matching_loss)
+        # # print(f"matching_loss: {matching_loss}")
         g_loss = g_nonsaturating_loss(fake_pred)
 
+        if args.use_clip_loss:
+            clip_loss = aux_clip_loss(fake_img[0], text_embeds = text_embeds)
+
+            print(f"clip_loss: {clip_loss} g_nonsaturating_loss: {g_loss}")       
+     
+            g_loss = torch.add(g_loss, clip_loss)
         loss_dict["g"] = g_loss
 
         generator.zero_grad()
@@ -252,7 +266,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
                 #     nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
                 # )
                 if args.use_text_cond:
-                    wandb_save(sample[-1],'Evaluation', text)
+                    wandb_save(sample[-1],'Evaluation', text[-1] + str(i))
                 else:
                     wandb_save(sample[-1],'Evaluation', i)
                 # print(f"sample[-1] {sample[-1]}")
@@ -380,13 +394,15 @@ if __name__ == "__main__":
     args.use_text_cond = True
     args.use_self_attn = True
     # args.sample_s
+    args.r1 = 10
     args.n_sample = 1
     args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     args.use_noise = False
     args.use_matching_loss = True
-    args.run_name = f"use_matching_loss {args.use_matching_loss} use_text_cond ({args.use_text_cond}) use_self_attn ({args.use_self_attn}) use_noise ({args.use_noise} current_time {current_time})"
+    args.use_clip_loss = True
+    args.run_name = f"use_clip_loss {args.use_clip_loss} use_matching_loss {args.use_matching_loss} use_text_cond ({args.use_text_cond}) use_self_attn ({args.use_self_attn}) use_noise ({args.use_noise} current_time {current_time})"
     device = args.device
     wandb.init(project='GigaGAN-linjiw', config=args, name=args.run_name)
 
