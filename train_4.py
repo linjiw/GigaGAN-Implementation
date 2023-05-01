@@ -149,7 +149,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         
         # matching-aware discriminator loss
         # random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
-        # # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        # # # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
         # fake_text_pred = discriminator(fake_img, random_text_embeddings)
         # matching_loss = aux_matching_loss(fake_pred, fake_text_pred)
         
@@ -308,16 +308,17 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.latent = 512
+    args.latent = 128
     args.n_mlp = 8
     args.start_iter = 0
     args.tin_dim = 512
-    args.tout_dim = 8
+    args.tout_dim = 1024
     args.use_multi_scale = False
     args.use_text_cond = True
+    # args.use_self_attn = True
     # args.sample_s
     args.n_sample = 2
-    args.batch = 1
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     

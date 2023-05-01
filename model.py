@@ -93,6 +93,7 @@ class Generator(nn.Module):
         if use_text_cond:
             self.style_dim = z_dim + tout_dim
             self.text_encoder = TextEncoder(tin_dim, tout_dim)
+            # print(f"style_dim {self.style_dim}")
             # style_dim = z_dim + tout_dim
         else:
             self.style_dim = z_dim
@@ -104,8 +105,16 @@ class Generator(nn.Module):
                     self.style_dim, self.style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
                 )
             )
-
+            
+        # learned_text_encoder = nn.Sequential(*layers)
+        # for i in range(n_mlp):
+        #     learned_text_encoder.append(
+        #         EqualLinear(
+        #             self.style_dim, self.style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+        #         )
+        #     )
         self.style = nn.Sequential(*layers)
+        # print(f"self.style {self.style}")
 
         self.channels = {
             4: 512, 8: 512, 16: 512, 32: 512, 64: 256 * channel_multiplier,
@@ -195,14 +204,16 @@ class Generator(nn.Module):
         input_is_latent=False, noise=None, randomize_noise=True,
     ):
         if self.use_text_cond:
+            # print(f"text_embeds: {text_embeds.shape}")
             seq_len = text_embeds.shape[1]
+            # print(f"seq_len: {seq_len}")
             text_embeds = self.text_encoder(text_embeds)
             t_local, t_global = torch.split(text_embeds, [seq_len-1, 1], dim=1)
             # batch, tout_dim
             t_global = t_global.squeeze(dim=1)
             styles = [torch.cat([style_, t_global], dim=1) for style_ in styles]
             # style.dim = style_.dim + t_global.dim
-
+        # print(f"style dim: {styles[0].shape}")
         if not input_is_latent:
             styles = [self.style(s) for s in styles]
 
@@ -375,10 +386,12 @@ class Predictor(nn.Module):
         out = (out + out3).sum(dim=1, keepdim=True)
         return out
 
+
+
 class Discriminator(nn.Module):
     def __init__(self, size, tin_dim=0, tout_dim=0, channel_multiplier=2,
         blur_kernel=[1, 3, 3, 1], use_multi_scale=False, use_self_attn=False,
-        use_text_cond=False,
+        use_text_cond=False, learned_text_encoder=None
     ):
         super().__init__()
 
@@ -412,11 +425,12 @@ class Discriminator(nn.Module):
             in_channel = out_channel
             self.predictors.append(Predictor(in_channel, tout_dim) if use_multi_scale else None)
         self.text_encoder = TextEncoder(tin_dim, tout_dim) if use_text_cond else None
-
+        self.text_encoder = learned_text_encoder if learned_text_encoder else self.text_encoder
     def forward(self, inputs, text_embeds=None):
         if self.use_text_cond:
             batch = text_embeds.shape[0]
             # [n, seq_len, tin_dim] --> [n, tout_dim]
+            # text_embeds = text_embeds[:,-1]
             text_embeds = self.text_encoder(text_embeds)[:, -1]
             # inputs: 4x --> 8x --> ... --> 64x
             in_len = len(inputs)

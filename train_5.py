@@ -13,6 +13,11 @@ from clip import CLIPText
 from datetime import datetime
 import wandb
 import lpips
+from layers import (
+    PixelNorm, make_kernel, Upsample, Downsample, Blur, EqualConv2d,
+    ModulatedConv2d, EqualLinear, NoiseInjection,
+    SelfAttention, CrossAttention, TextEncoder,
+)
 def wandb_save(tensor, logname, iter_num):
     # image = tensor.cpu().clone()  # we clone the tensor to not do changes on it
     # image = image.squeeze(0)      # remove the fake batch dimension
@@ -99,7 +104,7 @@ def multi_scale(image):
     images.append(image.detach())
     return images
 
-def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim, g_ema, device):
+def train(args, loader, generator, discriminator, text_encoder,shared_text_encoder, g_optim, d_optim, g_ema, device):
     loader = sample_data(loader)
     pbar = tqdm(range(args.iter))
 
@@ -141,24 +146,32 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         real_img = multi_scale(image_text['image']) if args.use_multi_scale else [image_text['image']]
         real_img = [img.to(args.device) for img in real_img]
         text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        text_code = shared_text_encoder(text_embeds) if args.use_text_cond else None
         next_text_embds = text_encoder(next(loader)['text']) if args.use_matching_loss else None
+        next_text_code = shared_text_encoder(next_text_embds) if args.use_matching_loss else None
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
         noise = mixing_noise(args.batch, args.latent, -1, device)
         # fake_img: [4x, 8x, ..., 64x] or [64x]
-        fake_img, _ = generator(noise, text_embeds)
+        # fake_img, _ = generator(noise, text_embeds)
+        # # [batch, 10]
+        # fake_pred = discriminator(fake_img, text_embeds)
+        # real_pred = discriminator(real_img, text_embeds)
+        
+        
+        fake_img, _ = generator(noise, text_code)
 
-        # [batch, 10]
-        fake_pred = discriminator(fake_img, text_embeds)
+        fake_pred = discriminator(fake_img, text_code)
         real_pred = discriminator(real_img, text_embeds)
+        
         d_loss = d_logistic_loss(real_pred, fake_pred)
         
         # matching-aware discriminator loss
         if args.use_matching_loss:
             # random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
             # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
-            fake_text_pred = discriminator(fake_img, next_text_embds)
+            fake_text_pred = discriminator(fake_img, next_text_code)
             matching_loss = aux_matching_loss(fake_pred, fake_text_pred).mean()
         
             d_loss = torch.add(d_loss, matching_loss)
@@ -168,7 +181,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         loss_dict["fake_score"] = fake_pred.mean()
 
         discriminator.zero_grad()
-        d_loss.backward()
+        d_loss.backward(retain_graph=True)
         d_optim.step()
 
         d_regularize = i % args.d_reg_every == 0
@@ -185,15 +198,15 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         requires_grad(discriminator, False)
 
         noise = mixing_noise(args.batch, args.latent, -1, device)
-        fake_img, _ = generator(noise, text_embeds)
+        fake_img, _ = generator(noise, text_code)
 
-        fake_pred = discriminator(fake_img, text_embeds)
+        fake_pred = discriminator(fake_img, text_code)
         g_loss = g_nonsaturating_loss(fake_pred)
 
         loss_dict["g"] = g_loss
 
         generator.zero_grad()
-        g_loss.backward()
+        g_loss.backward(retain_graph=True)
         g_optim.step()
 
         accumulate(g_ema, g_module, accum)
@@ -214,7 +227,9 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         if i % args.sample_every == 0:
             with torch.no_grad():
                 g_ema.eval()
-                sample, _ = g_ema([sample_z], sample_t)
+                sample_text_code = shared_text_encoder(sample_t)
+                sample, _ = g_ema([sample_z], sample_text_code)
+                # sample, _ = g_ema([sample_z], sample_t)
                 # utils.save_image(
                 #     sample[-1], f"sample/{str(i).zfill(6)}.png",
                 #     nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
@@ -238,6 +253,8 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         # wandb.log({'mean_path_length_avg': mean_path_length_avg} )
         wandb.log({'ada_aug_p': ada_aug_p} )
         wandb.log({'lpips': d} )
+        print(f"generator loss: {g_loss_val}")
+        print(f"discriminator loss: {d_loss_val}")
         if i % args.save_every == 0:
 
             if d < best_lpips:
@@ -339,17 +356,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # args.dataset_name = "dream-textures/textures-color-1k"
     args.dataset_name = "lambdalabs/pokemon-blip-captions"
-    args.latent = 512
+    args.latent = 128
     args.n_mlp = 8
     args.start_iter = 0
     args.tin_dim = 512
-    args.tout_dim = 16
+    args.tout_dim = 1024
     args.use_multi_scale = False
     args.use_text_cond = True
     args.use_self_attn = True
     # args.sample_s
+    args.r1 = 0.2048
     args.n_sample = 1
-    args.batch = 4
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     args.use_noise = True
@@ -363,6 +381,7 @@ if __name__ == "__main__":
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
         use_text_cond=args.use_text_cond, use_noise= args.use_noise
     ).to(device)
+    # learned_text_encoder = generator.text_encoder
     discriminator = Discriminator(
         args.size, args.tin_dim, args.tout_dim, channel_multiplier=args.channel_multiplier,
         use_multi_scale=args.use_multi_scale,
@@ -377,8 +396,12 @@ if __name__ == "__main__":
 
     d_reg_ratio = args.d_reg_every / (args.d_reg_every + 1)
 
-    g_optim = optim.AdamW(generator.parameters(), lr=args.lr, betas=(0, 0.99))
-    d_optim = optim.AdamW(discriminator.parameters(), lr=args.lr, betas=(0, 0.99))
+    # g_optim = optim.AdamW(generator.parameters(), lr=args.lr, betas=(0, 0.99))
+    # d_optim = optim.AdamW(discriminator.parameters(), lr=args.lr, betas=(0, 0.99))
+    shared_text_encoder = TextEncoder(args.tin_dim, args.tout_dim, args.n_mlp).to(device)
+    g_optim = optim.AdamW(list(shared_text_encoder.parameters()) + list(generator.parameters()), lr=args.lr, betas=(0, 0.99))
+    d_optim = optim.AdamW(list(shared_text_encoder.parameters()) + list(discriminator.parameters()), lr=args.lr, betas=(0, 0.99))
+
 
     if args.ckpt is not None:
         print("load model:", args.ckpt)
@@ -413,5 +436,6 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=args.batch, shuffle=True, drop_last=True)
     text_encoder = CLIPText(args.device) if args.use_text_cond else None
 
-    train(args, dataloader, generator, discriminator, text_encoder, g_optim, d_optim, g_ema, device)
+    # learned_text_encoder = TextEncoder(args.tin_dim, args.tout_dim, args.latent, args.device)
+    train(args, dataloader, generator, discriminator, text_encoder,shared_text_encoder, g_optim, d_optim, g_ema, device)
     wandb.finish()
