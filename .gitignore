@@ -142,8 +142,16 @@ wandb/
 *.arrow
 
 # models--openai--clip-vit-base-patch32
+<<<<<<< HEAD
 
 models--openai--clip-vit-base-patch32/
 
 lambdalabs___parquet/
 dream-textures___parquet/
+=======
+colab/
+*.pub
+dream-textures___parquet/
+lambdalabs___parquet/
+models--openai--clip-vit-base-patch32/
+>>>>>>> b13dd265eba200bedfe0eeb93569f1c0d1d1174c
