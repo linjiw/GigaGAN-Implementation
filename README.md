@@ -5,6 +5,10 @@ Implementation of [GigaGAN: Scaling up GANs for Text-to-Image Synthesis](https:/
 
 ```shell
 pip install transformers==4.27.4 datasets
+pip install -r requirements.txt
 ```
+# Colab
+or check our Colab for a quick start.
+
 # References
 - https://github.com/rosinality/stylegan2-pytorch
