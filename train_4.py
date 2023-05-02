@@ -21,6 +21,13 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
+# tensor helpers
+
+def log(t, eps = 1e-20):
+    return t.clamp(min = eps).log()
+
+def aux_matching_loss(real, fake):
+    return log(1 + real.exp()) + log(1 + fake.exp())
 
 def accumulate(model1, model2, decay=0.999):
     par1 = dict(model1.named_parameters())
@@ -34,6 +41,7 @@ def sample_data(loader):
     while True:
         for batch in loader:
             yield batch
+
 
 
 def d_logistic_loss(real_pred, fake_pred):
@@ -138,6 +146,14 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         fake_pred = discriminator(fake_img, text_embeds)
         real_pred = discriminator(real_img, text_embeds)
         d_loss = d_logistic_loss(real_pred, fake_pred)
+        
+        # matching-aware discriminator loss
+        # random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
+        # # # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        # fake_text_pred = discriminator(fake_img, random_text_embeddings)
+        # matching_loss = aux_matching_loss(fake_pred, fake_text_pred)
+        
+        # d_loss = torch.add(d_loss, matching_loss)
 
         loss_dict["d"] = d_loss
         loss_dict["real_score"] = real_pred.mean()
@@ -292,16 +308,17 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.latent = 512
+    args.latent = 128
     args.n_mlp = 8
     args.start_iter = 0
-    args.tin_dim = 0
-    args.tout_dim = 0
+    args.tin_dim = 512
+    args.tout_dim = 1024
     args.use_multi_scale = False
-    args.use_text_cond = False
+    args.use_text_cond = True
+    # args.use_self_attn = True
     # args.sample_s
-    args.n_sample = 4
-    args.batch = 4
+    args.n_sample = 2
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     

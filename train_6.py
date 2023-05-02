@@ -10,7 +10,14 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import resize
 from clip import CLIPText
+from datetime import datetime
 import wandb
+import os
+from beartype import beartype
+from beartype.typing import List, Optional, Tuple
+from clip_loss import OpenClipAdapter
+
+import lpips
 def wandb_save(tensor, logname, iter_num):
     # image = tensor.cpu().clone()  # we clone the tensor to not do changes on it
     # image = image.squeeze(0)      # remove the fake batch dimension
@@ -21,6 +28,27 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
+# tensor helpers
+
+def log(t, eps = 1e-20):
+    return t.clamp(min = eps).log()
+
+def aux_matching_loss(real, fake):
+    return log(1 + real.exp()) + log(1 + fake.exp())
+
+clip = OpenClipAdapter().to('cuda')
+def aux_clip_loss(
+    # clip: OpenClipAdapter,
+    images: torch.Tensor,
+    texts: Optional[List[str]] = None,
+    text_embeds: Optional[torch.Tensor] = None
+):
+    # assert exists(texts) ^ exists(text_embeds)
+
+    # if exists(texts):
+    # text_embeds = clip.embed_texts(texts)
+
+    return clip.contrastive_loss(images = images, text_embeds = text_embeds)
 
 def accumulate(model1, model2, decay=0.999):
     par1 = dict(model1.named_parameters())
@@ -34,6 +62,7 @@ def sample_data(loader):
     while True:
         for batch in loader:
             yield batch
+
 
 
 def d_logistic_loss(real_pred, fake_pred):
@@ -97,6 +126,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
     r1_loss = torch.tensor(0.0, device=device)
     g_loss_val = 0
     loss_dict = {}
+    loss_fn_alex = lpips.LPIPS(net='alex').to(device) # best forward scores
 
     g_module = generator
     d_module = discriminator
@@ -106,13 +136,23 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
     r_t_stat = 0
 
     sample_z = torch.randn(args.n_sample, args.latent, device=device)
-    text = next(loader)['text'][:1]
+    sample_text_img = next(loader)
+    text = sample_text_img['text'][:1]
+    samle_img = sample_text_img['image'][:1].to(device)
+    wandb_save(samle_img[-1],'target image', text[-1])
     print(text)
     if args.use_text_cond:
         sample_t = text_encoder(text)
         sample_t = sample_t.repeat(args.n_sample, 1, 1).detach()
     else:
         sample_t = None
+    best_lpips = 1e+6
+    d = 1e+6
+
+    dir_name = ["checkpoint", "sample"]
+    for i in dir_name:
+        if not os.path.exists(i):
+            os.makedirs(i)
 
     for idx in pbar:
         i = idx + args.start_iter
@@ -126,7 +166,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         real_img = multi_scale(image_text['image']) if args.use_multi_scale else [image_text['image']]
         real_img = [img.to(args.device) for img in real_img]
         text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
-
+        next_text_embds = text_encoder(next(loader)['text']) if args.use_matching_loss else None
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
@@ -138,7 +178,19 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         fake_pred = discriminator(fake_img, text_embeds)
         real_pred = discriminator(real_img, text_embeds)
         d_loss = d_logistic_loss(real_pred, fake_pred)
+        print(f"d_loss: {d_loss}")
 
+        # # matching-aware discriminator loss
+        # if args.use_matching_loss:
+        #     random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
+        #     # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        #     fake_text_pred = discriminator(fake_img, random_text_embeddings)
+        #     matching_loss = aux_matching_loss(fake_pred, fake_text_pred).mean() * 0.5
+        
+        #     d_loss = torch.add(d_loss, matching_loss)
+        # print(f"matching_loss: {matching_loss}")
+        
+        
         loss_dict["d"] = d_loss
         loss_dict["real_score"] = real_pred.mean()
         loss_dict["fake_score"] = fake_pred.mean()
@@ -164,8 +216,26 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         fake_img, _ = generator(noise, text_embeds)
 
         fake_pred = discriminator(fake_img, text_embeds)
+        # print(f"len(fake_img): {len(fake_img)})")
+        # print(f"fake_img[0].shape: {fake_img[0].shape}")
+        # print(f"text_embeds.shape: {text_embeds.shape}")
+        
+        # if args.use_matching_loss:
+        #     random_text_embeddings = torch.randn(args.batch, text_embeds.shape[-1])
+        #     # fake_text_embeds = text_encoder(image_text['text']) if args.use_text_cond else None
+        #     fake_text_pred = discriminator(fake_img, random_text_embeddings)
+        #     matching_loss = aux_matching_loss(fake_pred, fake_text_pred).mean() * 0.5
+        
+        #     # d_loss = torch.add(d_loss, matching_loss)
+        # # print(f"matching_loss: {matching_loss}")
         g_loss = g_nonsaturating_loss(fake_pred)
 
+        if args.use_clip_loss:
+            clip_loss = aux_clip_loss(fake_img[0], text_embeds = text_embeds)
+
+            print(f"clip_loss: {clip_loss} g_nonsaturating_loss: {g_loss}")       
+     
+            g_loss = torch.add(g_loss, clip_loss)
         loss_dict["g"] = g_loss
 
         generator.zero_grad()
@@ -181,20 +251,9 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         real_score_val = loss_reduced["real_score"].mean().item()
         fake_score_val = loss_reduced["fake_score"].mean().item()
 
-        pbar.set_description(
-            f"d: {d_loss_val:.4f}; g: {g_loss_val:.4f}; r1: {r1_val:.4f}; "
-            f"real_socre: {real_score_val:.4f}; fake_score: {fake_score_val:.4f}; "
-            f"augment: {ada_aug_p:.4f}"
-        )
+
         
-        wandb.log({'d_loss': d_loss_val} )
-        wandb.log({'g_loss_val': g_loss_val} )
-        wandb.log({'r1_loss': r1_val} )
-        wandb.log({'real_score': real_score_val} )
-        wandb.log({'fake_score': fake_score_val} )
-        # wandb.log({'path_loss': path_loss_val} )
-        # wandb.log({'mean_path_length_avg': mean_path_length_avg} )
-        wandb.log({'ada_aug_p': ada_aug_p} )
+
         # wandb.log({'clip_loss': clip_loss_value.item()} )
 
 
@@ -206,21 +265,47 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
                 #     sample[-1], f"sample/{str(i).zfill(6)}.png",
                 #     nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
                 # )
-                wandb_save(sample[-1],'Evaluation', i)
-
+                if args.use_text_cond:
+                    wandb_save(sample[-1],'Evaluation', text[-1] + str(i))
+                else:
+                    wandb_save(sample[-1],'Evaluation', i)
+                # print(f"sample[-1] {sample[-1]}")
+                # print(f"samle_img[-1] {samle_img[-1]}")
+                img0 = sample[-1] # image should be RGB, IMPORTANT: normalized to [-1,1]
+                img1 = samle_img[-1] # image should be RGB, IMPORTANT: normalized to [-1,1]
+                d = float(loss_fn_alex(img0, img1))
+                # print(f"lpips distance: {d}")
+        wandb.log({'d_loss': d_loss_val} )
+        wandb.log({'g_loss_val': g_loss_val} )
+        wandb.log({'r1_loss': r1_val} )
+        wandb.log({'real_score': real_score_val} )
+        wandb.log({'fake_score': fake_score_val} )
+        # wandb.log({'path_loss': path_loss_val} )
+        # wandb.log({'mean_path_length_avg': mean_path_length_avg} )
+        wandb.log({'ada_aug_p': ada_aug_p} )
+        wandb.log({'lpips': d} )
         if i % args.save_every == 0:
-            torch.save(
-                {
-                    "g": g_module.state_dict(),
-                    "d": d_module.state_dict(),
-                    "g_ema": g_ema.state_dict(),
-                    "g_optim": g_optim.state_dict(),
-                    "d_optim": d_optim.state_dict(),
-                    "args": args,
-                    "ada_aug_p": ada_aug_p,
-                },
-                f"checkpoint/{str(i).zfill(6)}.pt",
-            )
+
+            if d < best_lpips:
+                best_lpips = d
+                
+                torch.save(
+                    {
+                        "g": g_module.state_dict(),
+                        "d": d_module.state_dict(),
+                        "g_ema": g_ema.state_dict(),
+                        "g_optim": g_optim.state_dict(),
+                        "d_optim": d_optim.state_dict(),
+                        "args": args,
+                        "ada_aug_p": ada_aug_p,
+                    },
+                    f"checkpoint/{args.run_name}_best.pt",
+                )
+        pbar.set_description(
+            f"d: {d_loss_val:.4f}; g: {g_loss_val:.4f}; best_lpips: {best_lpips:.4f}; r1: {r1_val:.4f}; "
+            f"real_socre: {real_score_val:.4f}; fake_score: {fake_score_val:.4f}; "
+            f"augment: {ada_aug_p:.4f}"
+        )
 
 
 if __name__ == "__main__":
@@ -289,29 +374,42 @@ if __name__ == "__main__":
         default=256,
         help="probability update interval of the adaptive augmentation",
     )
+    current_time = datetime.now().strftime("%m%d_%H%M%S")
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default=f"{current_time}",
+        help="probability update interval of the adaptive augmentation",
+    )
 
     args = parser.parse_args()
-
-    args.latent = 512
+    # args.dataset_name = "dream-textures/textures-color-1k"
+    args.dataset_name = "lambdalabs/pokemon-blip-captions"
+    args.latent = 128
     args.n_mlp = 8
     args.start_iter = 0
-    args.tin_dim = 0
-    args.tout_dim = 0
+    args.tin_dim = 512
+    args.tout_dim = 1024 - 128
     args.use_multi_scale = False
-    args.use_text_cond = False
+    args.use_text_cond = True
+    args.use_self_attn = True
     # args.sample_s
-    args.n_sample = 4
-    args.batch = 4
+    args.r1 = 10
+    args.n_sample = 1
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
-    
+    args.use_noise = False
+    args.use_matching_loss = True
+    args.use_clip_loss = True
+    args.run_name = f"use_clip_loss {args.use_clip_loss} use_matching_loss {args.use_matching_loss} use_text_cond ({args.use_text_cond}) use_self_attn ({args.use_self_attn}) use_noise ({args.use_noise} current_time {current_time})"
     device = args.device
-    wandb.init(project='GigaGAN-linjiw', config=args)
+    wandb.init(project='GigaGAN-linjiw', config=args, name=args.run_name)
 
     generator = Generator(
         args.size, args.latent, args.n_mlp, args.tin_dim, args.tout_dim,
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
-        use_text_cond=args.use_text_cond,
+        use_text_cond=args.use_text_cond, use_noise= args.use_noise
     ).to(device)
     discriminator = Discriminator(
         args.size, args.tin_dim, args.tout_dim, channel_multiplier=args.channel_multiplier,
@@ -328,7 +426,7 @@ if __name__ == "__main__":
     d_reg_ratio = args.d_reg_every / (args.d_reg_every + 1)
 
     g_optim = optim.AdamW(generator.parameters(), lr=args.lr, betas=(0, 0.99))
-    d_optim = optim.AdamW(discriminator.parameters(), lr=args.lr, betas=(0, 0.99))
+    d_optim = optim.AdamW(discriminator.parameters(), lr=args.lr * 0.8, betas=(0, 0.99))
 
     if args.ckpt is not None:
         print("load model:", args.ckpt)
@@ -358,7 +456,7 @@ if __name__ == "__main__":
         for i in range(len(data['image'])):
             data['image'][i] = to_tensor(data['image'][i])
         return data
-    dataset = load_dataset('lambdalabs/pokemon-blip-captions', split="train", cache_dir='.')
+    dataset = load_dataset(args.dataset_name, split="train", cache_dir='.')
     dataset = dataset.with_transform(preprocess)
     dataloader = DataLoader(dataset, batch_size=args.batch, shuffle=True, drop_last=True)
     text_encoder = CLIPText(args.device) if args.use_text_cond else None

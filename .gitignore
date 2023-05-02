@@ -127,3 +127,28 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# checkpoint
+checkpoint/
+
+# sample
+sample/
+
+# wandb
+wandb/
+
+# *.lock
+*.lock
+*.arrow
+
+# models--openai--clip-vit-base-patch32
+colab/
+*.pub
+/dream-textures___parquet/
+/lambdalabs___parquet/
+/models--openai--clip-vit-base-patch32/
+/lambdalabs___parquet/*
+/dream-textures___parquet/*
+
+
+# dream-textures___parquet/

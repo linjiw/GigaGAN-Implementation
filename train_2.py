@@ -292,16 +292,16 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.latent = 512
+    args.latent = 64
     args.n_mlp = 8
     args.start_iter = 0
-    args.tin_dim = 0
-    args.tout_dim = 0
+    args.tin_dim = 512
+    args.tout_dim = 512
     args.use_multi_scale = False
-    args.use_text_cond = False
+    args.use_text_cond = True
     # args.sample_s
     args.n_sample = 4
-    args.batch = 4
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     

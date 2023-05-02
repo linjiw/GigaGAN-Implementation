@@ -26,7 +26,7 @@ class ConstantInput(nn.Module):
 class StyledConv(nn.Module):
     def __init__(
         self, in_channel, out_channel, kernel_size, style_dim,
-        n_kernel=1, upsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True,
+        n_kernel=1, upsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True, use_noise = True,
     ):
         super().__init__()
 
@@ -34,7 +34,7 @@ class StyledConv(nn.Module):
             in_channel, out_channel, kernel_size, style_dim, n_kernel=n_kernel,
             upsample=upsample, blur_kernel=blur_kernel, demodulate=demodulate,
         )
-
+        self.use_noise = use_noise
         self.noise = NoiseInjection()
         # self.bias = nn.Parameter(torch.zeros(1, out_channel, 1, 1))
         # self.activate = ScaledLeakyReLU(0.2)
@@ -42,7 +42,9 @@ class StyledConv(nn.Module):
 
     def forward(self, input, style, noise=None):
         out = self.conv(input, style)
-        out = self.noise(out, noise=noise)
+        if self.use_noise:
+            out = self.noise(out, noise=noise)
+        
         # out = out + self.bias
         out = self.activate(out)
 
@@ -79,7 +81,7 @@ class Generator(nn.Module):
         self, size, z_dim, n_mlp, tin_dim=0, tout_dim=0,
         channel_multiplier=2, blur_kernel=[1, 3, 3, 1], lr_mlp=0.01,
         use_self_attn=False, use_text_cond=False, use_multi_scale=False,
-        attn_res=[8, 16, 32],
+        attn_res=[8, 16, 32], use_noise = True,
     ):
         super().__init__()
 
@@ -87,9 +89,12 @@ class Generator(nn.Module):
         self.use_multi_scale = use_multi_scale
         self.use_self_attn = use_self_attn
         self.use_text_cond = use_text_cond
+        self.use_noise = use_noise
         if use_text_cond:
             self.style_dim = z_dim + tout_dim
             self.text_encoder = TextEncoder(tin_dim, tout_dim)
+            # print(f"style_dim {self.style_dim}")
+            # style_dim = z_dim + tout_dim
         else:
             self.style_dim = z_dim
 
@@ -100,8 +105,16 @@ class Generator(nn.Module):
                     self.style_dim, self.style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
                 )
             )
-
+            
+        # learned_text_encoder = nn.Sequential(*layers)
+        # for i in range(n_mlp):
+        #     learned_text_encoder.append(
+        #         EqualLinear(
+        #             self.style_dim, self.style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
+        #         )
+        #     )
         self.style = nn.Sequential(*layers)
+        # print(f"self.style {self.style}")
 
         self.channels = {
             4: 512, 8: 512, 16: 512, 32: 512, 64: 256 * channel_multiplier,
@@ -115,13 +128,13 @@ class Generator(nn.Module):
 
         self.input = ConstantInput(self.channels[4])
         self.conv1 = StyledConv(
-            self.channels[4], self.channels[4], 3, self.style_dim, blur_kernel=blur_kernel
+            self.channels[4], self.channels[4], 3, self.style_dim, blur_kernel=blur_kernel, use_noise=self.use_noise,
         )
         self.to_rgb1 = ToRGB(self.channels[4], self.style_dim, upsample=False)
-
+        # size = 64
         self.log_size = int(math.log(size, 2))
         self.num_layers = (self.log_size - 2) * 2 + 1
-
+        # self.num_layers = 
         self.convs = nn.ModuleList()
         self.attns = nn.ModuleList()
         self.upsamples = nn.ModuleList()
@@ -141,11 +154,11 @@ class Generator(nn.Module):
 
             self.convs.append(StyledConv(
                 in_channel, out_channel, 3, self.style_dim, upsample=True,
-                blur_kernel=blur_kernel, n_kernel=n_kernels[res],
+                blur_kernel=blur_kernel, n_kernel=n_kernels[res], use_noise=self.use_noise,
             ))
             self.convs.append(StyledConv(
                 out_channel, out_channel, 3, self.style_dim, blur_kernel=blur_kernel,
-                n_kernel=n_kernels[res],
+                n_kernel=n_kernels[res], use_noise=self.use_noise,
             ))
 
             self.attns.append(
@@ -160,6 +173,8 @@ class Generator(nn.Module):
             in_channel = out_channel
 
         self.n_latent = self.log_size * 2 - 2
+        
+        # n_latent means how much latent to add to multi-scale
 
     def make_noise(self):
         device = self.input.input.device
@@ -189,13 +204,16 @@ class Generator(nn.Module):
         input_is_latent=False, noise=None, randomize_noise=True,
     ):
         if self.use_text_cond:
+            # print(f"text_embeds: {text_embeds.shape}")
             seq_len = text_embeds.shape[1]
+            # print(f"seq_len: {seq_len}")
             text_embeds = self.text_encoder(text_embeds)
             t_local, t_global = torch.split(text_embeds, [seq_len-1, 1], dim=1)
             # batch, tout_dim
             t_global = t_global.squeeze(dim=1)
             styles = [torch.cat([style_, t_global], dim=1) for style_ in styles]
-
+            # style.dim = style_.dim + t_global.dim
+        # print(f"style dim: {styles[0].shape}")
         if not input_is_latent:
             styles = [self.style(s) for s in styles]
 
@@ -234,6 +252,7 @@ class Generator(nn.Module):
             latent2 = styles[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
 
             latent = torch.cat([latent, latent2], 1)
+            # cat two latent vectors from two styles
 
         images = []
         out = self.input(latent)
@@ -367,10 +386,12 @@ class Predictor(nn.Module):
         out = (out + out3).sum(dim=1, keepdim=True)
         return out
 
+
+
 class Discriminator(nn.Module):
     def __init__(self, size, tin_dim=0, tout_dim=0, channel_multiplier=2,
         blur_kernel=[1, 3, 3, 1], use_multi_scale=False, use_self_attn=False,
-        use_text_cond=False,
+        use_text_cond=False, learned_text_encoder=None
     ):
         super().__init__()
 
@@ -404,11 +425,12 @@ class Discriminator(nn.Module):
             in_channel = out_channel
             self.predictors.append(Predictor(in_channel, tout_dim) if use_multi_scale else None)
         self.text_encoder = TextEncoder(tin_dim, tout_dim) if use_text_cond else None
-
+        self.text_encoder = learned_text_encoder if learned_text_encoder else self.text_encoder
     def forward(self, inputs, text_embeds=None):
         if self.use_text_cond:
             batch = text_embeds.shape[0]
             # [n, seq_len, tin_dim] --> [n, tout_dim]
+            # text_embeds = text_embeds[:,-1]
             text_embeds = self.text_encoder(text_embeds)[:, -1]
             # inputs: 4x --> 8x --> ... --> 64x
             in_len = len(inputs)
