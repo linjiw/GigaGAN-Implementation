@@ -147,5 +147,8 @@ colab/
 /dream-textures___parquet/
 /lambdalabs___parquet/
 /models--openai--clip-vit-base-patch32/
+/lambdalabs___parquet/*
+/dream-textures___parquet/*
+
 
 # dream-textures___parquet/
