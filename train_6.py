@@ -65,11 +65,28 @@ def sample_data(loader):
 
 
 
+
+
 def d_logistic_loss(real_pred, fake_pred):
     real_loss = F.softplus(-real_pred)
     fake_loss = F.softplus(fake_pred)
 
     return real_loss.mean() + fake_loss.mean()
+
+def d_conditional_loss(real_pred, wrong_text_pred, right_text_pred):
+    """
+    7: sr ← D(x, h) {real image, right text} real_pred
+    8: sw ← D(x, hˆ) {real image, wrong text} wrong_text_pred
+    9: sf ← D(ˆx, h) {fake image, right text} right_text_pred
+    10: LD ← log(sr) + (log(1 − sw) + log(1 − sf ))/2
+    """
+    
+    real_loss = F.softplus(-real_pred)
+    wrong_text_loss = F.softplus(wrong_text_pred)
+    right_text_loss = F.softplus(right_text_pred)
+    
+    return real_loss.mean() + wrong_text_loss.mean() + right_text_loss.mean()
+
 
 
 def d_r1_loss(real_pred, real_img):
@@ -177,8 +194,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         # [batch, 10]
         fake_pred = discriminator(fake_img, text_embeds)
         real_pred = discriminator(real_img, text_embeds)
-        d_loss = d_logistic_loss(real_pred, fake_pred)
-        print(f"d_loss: {d_loss}")
+        # print(f"d_loss: {d_loss}")
 
         # # matching-aware discriminator loss
         # if args.use_matching_loss:
@@ -189,6 +205,18 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         
         #     d_loss = torch.add(d_loss, matching_loss)
         # print(f"matching_loss: {matching_loss}")
+        
+        # add d_conditional_loss
+        if args.use_matching_loss:
+            
+            wrong_text_pred = discriminator(real_img, next_text_embds)
+            # right_text_pred = discriminator(fake_img, text_embeds)
+            d_loss = (real_pred, wrong_text_pred, fake_pred)
+        else:
+            d_loss = d_logistic_loss(real_pred, fake_pred)
+        print(f"d_loss: {d_loss}")
+
+            
         
         
         loss_dict["d"] = d_loss
@@ -236,6 +264,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
             print(f"clip_loss: {clip_loss} g_nonsaturating_loss: {g_loss}")       
      
             g_loss = torch.add(g_loss, clip_loss)
+            
         loss_dict["g"] = g_loss
 
         generator.zero_grad()
@@ -401,7 +430,7 @@ if __name__ == "__main__":
     args.sample_every = 200
     args.use_noise = False
     args.use_matching_loss = True
-    args.use_clip_loss = True
+    args.use_clip_loss = False
     args.run_name = f"use_clip_loss {args.use_clip_loss} use_matching_loss {args.use_matching_loss} use_text_cond ({args.use_text_cond}) use_self_attn ({args.use_self_attn}) use_noise ({args.use_noise} current_time {current_time})"
     device = args.device
     wandb.init(project='GigaGAN-linjiw', config=args, name=args.run_name)
@@ -460,6 +489,6 @@ if __name__ == "__main__":
     dataset = dataset.with_transform(preprocess)
     dataloader = DataLoader(dataset, batch_size=args.batch, shuffle=True, drop_last=True)
     text_encoder = CLIPText(args.device) if args.use_text_cond else None
-
+    # text_encoder.eval()
     train(args, dataloader, generator, discriminator, text_encoder, g_optim, d_optim, g_ema, device)
     wandb.finish()

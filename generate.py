@@ -139,7 +139,7 @@ if __name__ == "__main__":
     device = args.device
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_205603)_best.pt"
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_172632)_best.pt"
-    args.ckpt = "checkpoint/380000.pt"
+    args.ckpt = "checkpoint/400000.pt"
     generator = Generator(
         args.size, args.latent, args.n_mlp, args.tin_dim, args.tout_dim,
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
