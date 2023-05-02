@@ -9,6 +9,14 @@ pip install -r requirements.txt
 ```
 # Colab
 or check our Colab for a quick start.
+- https://github.com/linjiw/GigaGAN-Implementation/blob/main/16726_GigaGANipynb.ipynb
 
 # References
 - https://github.com/rosinality/stylegan2-pytorch
+
+# Train
+- [x] Unconditional
+- [o] CLIP loss
+- [o] Matching-aware loss
+- [o] Text Conditional
+- [ ] Muti-Scale

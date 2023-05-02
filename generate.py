@@ -120,17 +120,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # args.dataset_name = "dream-textures/textures-color-1k"
     args.dataset_name = "lambdalabs/pokemon-blip-captions"
-    args.latent = 512
+    args.latent = 128
     args.n_mlp = 8
     args.start_iter = 0
     args.tin_dim = 512
-    args.tout_dim = 8
+    args.tout_dim = 1024
     args.use_multi_scale = False
     args.use_text_cond = True
     args.use_self_attn = True
     # args.sample_s
     args.n_sample = 1
-    args.batch = 4
+    args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
     args.use_noise = True
@@ -139,6 +139,7 @@ if __name__ == "__main__":
     device = args.device
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_205603)_best.pt"
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_172632)_best.pt"
+    args.ckpt = "checkpoint/380000.pt"
     generator = Generator(
         args.size, args.latent, args.n_mlp, args.tin_dim, args.tout_dim,
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
