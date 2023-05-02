@@ -16,7 +16,7 @@ or check our Colab for a quick start.
 
 # Train
 - [x] Unconditional
-- [o] CLIP loss
-- [o] Matching-aware loss
-- [o] Text Conditional
+- [x] CLIP loss
+- [x] Matching-aware loss
+- [x] Text Conditional
 - [ ] Muti-Scale
