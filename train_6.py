@@ -85,7 +85,7 @@ def d_conditional_loss(real_pred, wrong_text_pred, right_text_pred):
     wrong_text_loss = F.softplus(wrong_text_pred)
     right_text_loss = F.softplus(right_text_pred)
     
-    return real_loss.mean() + wrong_text_loss.mean() + right_text_loss.mean()
+    return real_loss.mean() + (wrong_text_loss.mean() + right_text_loss.mean()) * 0.5
 
 
 
@@ -211,7 +211,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
             
             wrong_text_pred = discriminator(real_img, next_text_embds)
             # right_text_pred = discriminator(fake_img, text_embeds)
-            d_loss = (real_pred, wrong_text_pred, fake_pred)
+            d_loss = d_conditional_loss(real_pred, wrong_text_pred, fake_pred)
         else:
             d_loss = d_logistic_loss(real_pred, fake_pred)
         print(f"d_loss: {d_loss}")
@@ -259,7 +259,7 @@ def train(args, loader, generator, discriminator, text_encoder, g_optim, d_optim
         g_loss = g_nonsaturating_loss(fake_pred)
 
         if args.use_clip_loss:
-            clip_loss = aux_clip_loss(fake_img[0], text_embeds = text_embeds)
+            clip_loss = aux_clip_loss(fake_img[0], text_embeds = text_embeds) * args.clip_loss_weight
 
             print(f"clip_loss: {clip_loss} g_nonsaturating_loss: {g_loss}")       
      
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     args.n_mlp = 8
     args.start_iter = 0
     args.tin_dim = 512
-    args.tout_dim = 1024 - 128
+    args.tout_dim = 1024
     args.use_multi_scale = False
     args.use_text_cond = True
     args.use_self_attn = True
@@ -428,10 +428,12 @@ if __name__ == "__main__":
     args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
-    args.use_noise = False
+    args.use_noise = True
+    args.clip_loss_weight = 0.5
     args.use_matching_loss = True
-    args.use_clip_loss = False
+    args.use_clip_loss = True
     args.run_name = f"use_clip_loss {args.use_clip_loss} use_matching_loss {args.use_matching_loss} use_text_cond ({args.use_text_cond}) use_self_attn ({args.use_self_attn}) use_noise ({args.use_noise} current_time {current_time})"
+    # args.ckpt = "checkpoint/630000.pt"
     device = args.device
     wandb.init(project='GigaGAN-linjiw', config=args, name=args.run_name)
 
@@ -464,7 +466,7 @@ if __name__ == "__main__":
 
         try:
             ckpt_name = os.path.basename(args.ckpt)
-            args.start_iter = int(os.path.splitext(ckpt_name)[0])
+            # args.start_iter = int(os.path.splitext(ckpt_name)[0])
 
         except ValueError:
             pass

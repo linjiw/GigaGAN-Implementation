@@ -35,13 +35,21 @@ import lpips
 
 #     d = Discriminator(image_size, tin_dim, tout_dim)
 #     out = d(images, text_embeds)
-def sample_img(args, text_encoder, generator, text_prompt):
-    sample_z = torch.randn(1 , args.latent, device=device)
+def extract_numbers(input_string):
+    return ''.join([char for char in input_string if char.isdigit()])
+def sample_img(args, text_encoder, generator, text_prompt, save_dir):
+    sample_z = torch.randn(args.n_sample , args.latent, device=device)
     text_embeds = text_encoder(text_prompt)
+    sample_t = text_embeds.repeat(args.n_sample, 1, 1).detach()
+
     
-    sample, _ = generator([sample_z], text_embeds)
+    sample, _ = generator([sample_z], sample_t)
     # wandb_save(sample[-1],'Evaluation', i)
-    utils.save_image(sample[-1], f"sample/{text_prompt}.png",)
+    # utils.save_image(sample[-1], f"sample/{text_prompt}.png",)
+    utils.save_image(
+        sample[-1], f"sample/{save_dir}",
+        nrow=int(math.sqrt(args.n_sample)), normalize=True, value_range=(-1, 1),
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GigaGAN trainer")
@@ -129,7 +137,7 @@ if __name__ == "__main__":
     args.use_text_cond = True
     args.use_self_attn = True
     # args.sample_s
-    args.n_sample = 1
+    args.n_sample = 16
     args.batch = 2
     args.save_every = 10000
     args.sample_every = 200
@@ -139,8 +147,11 @@ if __name__ == "__main__":
     device = args.device
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_205603)_best.pt"
     args.ckpt = "checkpoint/use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0429_172632)_best.pt"
-    args.ckpt = "checkpoint/400000.pt"
-    generator = Generator(
+    # args.ckpt = "checkpoint/400000.pt"
+    args.ckpt = "checkpoint/" + "use_clip_loss False use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (False current_time 0502_135422)_best.pt"
+    args.ckpt = "checkpoint/" + "use_clip_loss False use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0502_153441)_best.pt"
+    args.ckpt = "checkpoint/use_clip_loss False use_matching_loss True use_text_cond (True) use_self_attn (True) use_noise (True current_time 0502_163536)_best.pt"
+    g_ema = Generator(
         args.size, args.latent, args.n_mlp, args.tin_dim, args.tout_dim,
         channel_multiplier=args.channel_multiplier, use_multi_scale=args.use_multi_scale,
         use_text_cond=args.use_text_cond, use_noise= args.use_noise
@@ -158,17 +169,20 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-        generator.load_state_dict(ckpt["g"])
+        # generator.load_state_dict(ckpt["g"])
         # discriminator.load_state_dict(ckpt["d"])
-        # g_ema.load_state_dict(ckpt["g_ema"])
+        g_ema.load_state_dict(ckpt["g_ema"])
 
         # g_optim.load_state_dict(ckpt["g_optim"])
         # d_optim.load_state_dict(ckpt["d_optim"])
 
-    generator.eval()
+    g_ema.eval()
     text_encoder = CLIPText(args.device)
     
     z = torch.randn(args.n_sample, args.latent, device=device)
-    text_name = input("Enter text: ")
-    text_prompt = [text_name]
-    sample_img(args, text_encoder, generator, text_prompt)
+    # text_name = input("Enter text: ")
+    text_prompt = ["a blue pokemon with a red tail", "a black dog with a white tail", "a yellow bird with big eyes", "a red bird with a yellow beak"] 
+    current_time = datetime.now().strftime("%m%d_%H%M%S")
+    for ii, text in enumerate(text_prompt):
+        save_dir = extract_numbers(args.ckpt) + text + f'.png'
+        sample_img(args, text_encoder, g_ema, [text], save_dir)
